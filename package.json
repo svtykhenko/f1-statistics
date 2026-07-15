@@ -1,0 +1,14 @@
+{
+  "name": "f1-race-results",
+  "version": "1.0.0",
+  "description": "F1 race results viewer for the current season",
+  "scripts": {
+    "dev": "npx serve . -l 3000",
+    "start": "npx serve . -l 3000"
+  },
+  "devDependencies": {
+    "serve": "^14.2.3"
+  },
+  "keywords": ["f1", "formula1", "race-results"],
+  "license": "MIT"
+}

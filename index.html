@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F1 Race Results</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏎</text></svg>" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="header-brand">
+          <span class="brand-flag">🏁</span>
+          <div>
+            <h1 class="brand-title">Formula 1</h1>
+            <p class="brand-subtitle" id="seasonLabel">Loading season…</p>
+          </div>
+        </div>
+        <nav class="header-nav">
+          <select id="seasonSelect" class="season-select" aria-label="Select season"></select>
+          <button class="nav-btn active" id="navSchedule" aria-pressed="true">Season Schedule</button>
+          <button class="nav-btn" id="navStandings" aria-pressed="false">Driver Standings</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="main-content">
+
+      <!-- ── Schedule / Race list ── -->
+      <section id="viewSchedule">
+        <div class="section-header">
+          <h2 class="section-title" id="scheduleTitle">2025 Race Calendar</h2>
+          <p class="section-meta" id="scheduleMeta"></p>
+        </div>
+        <div id="raceGrid" class="race-grid" role="list"></div>
+        <div id="scheduleLoader" class="loader-wrap" aria-live="polite">
+          <div class="spinner"></div><span>Fetching race calendar…</span>
+        </div>
+        <div id="scheduleError" class="error-banner" hidden></div>
+      </section>
+
+      <!-- ── Race detail (results) ── -->
+      <section id="viewDetail" hidden>
+        <button class="back-btn" id="backBtn">← Back to calendar</button>
+        <div id="raceDetailHeader" class="detail-header"></div>
+        <div id="raceResultsTable" class="table-wrap"></div>
+        <div id="detailLoader" class="loader-wrap" aria-live="polite">
+          <div class="spinner"></div><span>Fetching race results…</span>
+        </div>
+        <div id="detailError" class="error-banner" hidden></div>
+      </section>
+
+      <!-- ── Driver Standings ── -->
+      <section id="viewStandings" hidden>
+        <div class="section-header">
+          <h2 class="section-title">Driver Championship Standings</h2>
+          <p class="section-meta" id="standingsMeta"></p>
+        </div>
+        <div id="standingsTable" class="table-wrap"></div>
+        <div id="standingsLoader" class="loader-wrap" aria-live="polite">
+          <div class="spinner"></div><span>Fetching standings…</span>
+        </div>
+        <div id="standingsError" class="error-banner" hidden></div>
+      </section>
+
+    </main>
+
+    <footer class="site-footer">
+      Data provided by <a href="https://jolpi.ca/ergast" target="_blank" rel="noopener">Jolpica F1 API</a> (Ergast-compatible)
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
