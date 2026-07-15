@@ -21,6 +21,8 @@
           <select id="seasonSelect" class="season-select" aria-label="Select season"></select>
           <button class="nav-btn active" id="navSchedule" aria-pressed="true">Season Schedule</button>
           <button class="nav-btn" id="navStandings" aria-pressed="false">Driver Standings</button>
+          <button class="nav-btn" id="navCircuits" aria-pressed="false">Circuits</button>
+          <button class="nav-btn" id="navDrivers" aria-pressed="false">Drivers</button>
         </nav>
       </div>
     </header>
@@ -77,6 +79,32 @@
             <div id="constructorError" class="error-banner" hidden></div>
           </div>
         </div>
+      </section>
+
+      <!-- ── Circuits ── -->
+      <section id="viewCircuits" hidden>
+        <div class="section-header">
+          <h2 class="section-title">F1 Circuits</h2>
+          <p class="section-meta" id="circuitsMeta"></p>
+        </div>
+        <div id="circuitsGrid" class="circuits-grid"></div>
+        <div id="circuitsLoader" class="loader-wrap" aria-live="polite">
+          <div class="spinner"></div><span>Fetching circuits…</span>
+        </div>
+        <div id="circuitsError" class="error-banner" hidden></div>
+      </section>
+
+      <!-- ── Drivers ── -->
+      <section id="viewDrivers" hidden>
+        <div class="section-header">
+          <h2 class="section-title">F1 Drivers</h2>
+          <p class="section-meta" id="driversMeta"></p>
+        </div>
+        <div id="driversGrid" class="drivers-grid"></div>
+        <div id="driversLoader" class="loader-wrap" aria-live="polite">
+          <div class="spinner"></div><span>Fetching drivers…</span>
+        </div>
+        <div id="driversError" class="error-banner" hidden></div>
       </section>
 
     </main>

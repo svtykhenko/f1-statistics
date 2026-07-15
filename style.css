@@ -413,6 +413,173 @@ tbody td {
   .standings-columns { grid-template-columns: 1fr; gap: 40px; }
 }
 
+/* ─── Circuits grid ─────────────────────────────────────────────── */
+.circuits-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.circuit-card {
+  background: var(--dark-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color .15s, transform .1s, box-shadow .15s;
+}
+
+.circuit-card:hover {
+  border-color: var(--red);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.circuit-country {
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.circuit-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--white);
+  line-height: 1.25;
+}
+
+.circuit-locality {
+  font-size: .82rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.circuit-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  flex: 1;
+}
+
+.circuit-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stat-label {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: .88rem;
+  color: var(--off-white);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-sub {
+  font-size: .78rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* ─── Drivers ───────────────────────────────────────────────────── */
+.drivers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.driver-card {
+  background: var(--dark-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color .15s, transform .1s, box-shadow .15s;
+}
+
+.driver-card:hover {
+  border-color: var(--red);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.driver-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.driver-num-badge {
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--red);
+  font-variant-numeric: tabular-nums;
+}
+
+.driver-code {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.driver-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--white);
+  line-height: 1.25;
+}
+
+.driver-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.driver-nat {
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.driver-dob {
+  font-size: .75rem;
+  color: var(--muted);
+}
+
+.driver-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.driver-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 /* ─── Footer ────────────────────────────────────────────────────── */
 .site-footer {
   text-align: center;

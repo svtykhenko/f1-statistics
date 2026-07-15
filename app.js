@@ -72,6 +72,8 @@ async function fetchJSON(url) {
 let cachedSchedule              = null;
 let cachedStandings             = null;
 let cachedConstructorStandings  = null;
+let cachedCircuits              = null;
+let cachedDrivers               = null;
 let cachedResults               = {};   // keyed by round
 let cachedWinners               = {};   // keyed by round → driver name
 
@@ -80,6 +82,8 @@ function resetCaches() {
   cachedSchedule             = null;
   cachedStandings            = null;
   cachedConstructorStandings = null;
+  cachedCircuits             = null;
+  cachedDrivers              = null;
   cachedResults              = {};
   cachedWinners              = {};
 }
@@ -89,6 +93,8 @@ function resetCaches() {
 const viewSchedule  = document.getElementById('viewSchedule');
 const viewDetail    = document.getElementById('viewDetail');
 const viewStandings = document.getElementById('viewStandings');
+const viewCircuits  = document.getElementById('viewCircuits');
+const viewDrivers   = document.getElementById('viewDrivers');
 
 const raceGrid       = document.getElementById('raceGrid');
 const scheduleLoader = document.getElementById('scheduleLoader');
@@ -109,7 +115,17 @@ const constructorError  = document.getElementById('constructorError');
 
 const navSchedule  = document.getElementById('navSchedule');
 const navStandings = document.getElementById('navStandings');
+const navCircuits  = document.getElementById('navCircuits');
+const navDrivers   = document.getElementById('navDrivers');
 const backBtn      = document.getElementById('backBtn');
+
+const circuitsGrid   = document.getElementById('circuitsGrid');
+const circuitsLoader = document.getElementById('circuitsLoader');
+const circuitsError  = document.getElementById('circuitsError');
+
+const driversGrid   = document.getElementById('driversGrid');
+const driversLoader = document.getElementById('driversLoader');
+const driversError  = document.getElementById('driversError');
 const seasonLabel  = document.getElementById('seasonLabel');
 const seasonSelect = document.getElementById('seasonSelect');
 
@@ -118,10 +134,16 @@ function showView(name) {
   viewSchedule.hidden  = name !== 'schedule';
   viewDetail.hidden    = name !== 'detail';
   viewStandings.hidden = name !== 'standings';
+  viewCircuits.hidden  = name !== 'circuits';
+  viewDrivers.hidden   = name !== 'drivers';
   navSchedule.classList.toggle('active',  name === 'schedule' || name === 'detail');
   navStandings.classList.toggle('active', name === 'standings');
+  navCircuits.classList.toggle('active',  name === 'circuits');
+  navDrivers.classList.toggle('active',   name === 'drivers');
   navSchedule.setAttribute('aria-pressed',  String(name === 'schedule' || name === 'detail'));
   navStandings.setAttribute('aria-pressed', String(name === 'standings'));
+  navCircuits.setAttribute('aria-pressed',  String(name === 'circuits'));
+  navDrivers.setAttribute('aria-pressed',   String(name === 'drivers'));
 }
 
 function showError(el, msg) {
@@ -472,6 +494,212 @@ function renderStandings(list) {
     </table>`;
 }
 
+// ── Circuits ─────────────────────────────────────────────────────
+async function loadCircuits() {
+  if (cachedCircuits) { renderCircuits(cachedCircuits); return; }
+  circuitsLoader.hidden = false;
+  circuitsError.hidden  = true;
+  circuitsGrid.innerHTML = '';
+
+  try {
+    // Fetch all circuits (API returns up to 1000 with limit=1000)
+    const data = await fetchJSON('https://api.jolpi.ca/ergast/f1/circuits.json?limit=1000');
+    cachedCircuits = data.MRData.CircuitTable.Circuits;
+    circuitsLoader.hidden = true;
+    renderCircuits(cachedCircuits);
+  } catch (err) {
+    circuitsLoader.hidden = true;
+    showError(circuitsError, `Could not load circuits: ${err.message}`);
+  }
+}
+
+// Static lap-record data for well-known circuits (circuitId → { time, driver, year })
+const LAP_RECORDS = {
+  albert_park:      { time: '1:20.235', driver: 'Charles Leclerc',    year: 2024 },
+  bahrain:          { time: '1:31.447', driver: 'Pedro de la Rosa',   year: 2005 },
+  jeddah:           { time: '1:27.511', driver: 'Lewis Hamilton',     year: 2021 },
+  suzuka:           { time: '1:30.983', driver: 'Lewis Hamilton',     year: 2019 },
+  shanghai:         { time: '1:32.238', driver: 'Michael Schumacher', year: 2004 },
+  miami:            { time: '1:29.708', driver: 'Max Verstappen',     year: 2023 },
+  imola:            { time: '1:15.484', driver: 'Valtteri Bottas',    year: 2020 },
+  monaco:           { time: '1:12.909', driver: 'Rubens Barrichello', year: 2004 },
+  villeneuve:       { time: '1:13.078', driver: 'Valtteri Bottas',    year: 2019 },
+  catalunya:        { time: '1:18.149', driver: 'Max Verstappen',     year: 2023 },
+  red_bull_ring:    { time: '1:05.619', driver: 'Carlos Sainz',       year: 2020 },
+  silverstone:      { time: '1:27.097', driver: 'Max Verstappen',     year: 2020 },
+  hungaroring:      { time: '1:16.627', driver: 'Lewis Hamilton',     year: 2020 },
+  spa:              { time: '1:46.286', driver: 'Valtteri Bottas',    year: 2018 },
+  zandvoort:        { time: '1:11.097', driver: 'Lewis Hamilton',     year: 2021 },
+  monza:            { time: '1:21.046', driver: 'Rubens Barrichello', year: 2004 },
+  baku:             { time: '1:43.009', driver: 'Charles Leclerc',    year: 2019 },
+  marina_bay:       { time: '1:35.867', driver: 'Kevin Magnussen',    year: 2018 },
+  rodriguez:        { time: '1:17.774', driver: 'Valtteri Bottas',    year: 2021 },
+  interlagos:       { time: '1:10.540', driver: 'Valtteri Bottas',    year: 2018 },
+  vegas:            { time: '1:35.119', driver: 'Oscar Piastri',      year: 2024 },
+  losail:           { time: '1:24.319', driver: 'Max Verstappen',     year: 2023 },
+  yas_marina:       { time: '1:26.103', driver: 'Max Verstappen',     year: 2021 },
+  nurburgring:      { time: '1:29.919', driver: 'Michael Schumacher', year: 2004 },
+  hockenheimring:   { time: '1:13.780', driver: 'Kimi Räikkönen',     year: 2004 },
+  sepang:           { time: '1:34.223', driver: 'Juan Pablo Montoya', year: 2004 },
+  istanbul:         { time: '1:24.770', driver: 'Max Verstappen',     year: 2020 },
+  valencia:         { time: '1:38.683', driver: 'Timo Glock',         year: 2009 },
+  yeongam:          { time: '1:38.678', driver: 'Sebastian Vettel',   year: 2011 },
+  americas:         { time: '1:36.169', driver: 'Charles Leclerc',    year: 2019 },
+  portimao:         { time: '1:19.912', driver: 'Valtteri Bottas',    year: 2020 },
+  mugello:          { time: '1:17.939', driver: 'Lewis Hamilton',     year: 2020 },
+  algarve:          { time: '1:19.912', driver: 'Valtteri Bottas',    year: 2020 },
+};
+
+// Static circuit-length data (km) for common circuits
+const CIRCUIT_LENGTHS = {
+  albert_park:    5.278, bahrain:       5.412, jeddah:        6.174,
+  suzuka:         5.807, shanghai:      5.451, miami:         5.412,
+  imola:          4.909, monaco:        3.337, villeneuve:    4.361,
+  catalunya:      4.657, red_bull_ring: 4.318, silverstone:   5.891,
+  hungaroring:    4.381, spa:           7.004, zandvoort:     4.259,
+  monza:          5.793, baku:          6.003, marina_bay:    4.940,
+  rodriguez:      4.304, interlagos:    4.309, vegas:         6.201,
+  losail:         5.380, yas_marina:    5.281, nurburgring:   5.148,
+  hockenheimring: 4.574, sepang:        5.543, istanbul:      5.338,
+  valencia:       5.419, americas:      5.513, portimao:      4.653,
+  mugello:        5.245,
+};
+
+function renderCircuits(circuits) {
+  document.getElementById('circuitsMeta').textContent =
+    `${circuits.length} circuits in the F1 database`;
+
+  // Sort alphabetically by country then circuit name
+  const sorted = [...circuits].sort((a, b) => {
+    const cmp = a.Location.country.localeCompare(b.Location.country);
+    return cmp !== 0 ? cmp : a.circuitName.localeCompare(b.circuitName);
+  });
+
+  circuitsGrid.innerHTML = sorted.map(c => {
+    const cid    = c.circuitId;
+    const rec    = LAP_RECORDS[cid];
+    const len    = CIRCUIT_LENGTHS[cid];
+    const recHtml = rec
+      ? `<div class="circuit-stat"><span class="stat-label">Lap Record</span><span class="stat-value">${esc(rec.time)} <span class="stat-sub">${esc(rec.driver)}, ${rec.year}</span></span></div>`
+      : '';
+    const lenHtml = len
+      ? `<div class="circuit-stat"><span class="stat-label">Length</span><span class="stat-value">${len.toFixed(3)} km</span></div>`
+      : '';
+
+    return `
+      <div class="circuit-card">
+        <div class="circuit-country">${flag(c.Location.country)} ${esc(c.Location.country)}</div>
+        <div class="circuit-name">${esc(c.circuitName)}</div>
+        <div class="circuit-locality">${esc(c.Location.locality)}</div>
+        <div class="circuit-stats">
+          ${lenHtml}
+          ${recHtml}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Drivers ──────────────────────────────────────────────────────
+async function loadDrivers() {
+  if (cachedDrivers) { renderDrivers(cachedDrivers); return; }
+  driversLoader.hidden = false;
+  driversError.hidden  = true;
+  driversGrid.innerHTML = '';
+
+  try {
+    const [driversData, standingsData] = await Promise.all([
+      fetchJSON(`${BASE}/drivers.json?limit=100`),
+      cachedStandings ? Promise.resolve(null) : fetchJSON(`${BASE}/driverstandings.json?limit=100`),
+    ]);
+
+    if (standingsData) {
+      cachedStandings = standingsData.MRData.StandingsTable.StandingsLists[0];
+    }
+
+    const allDrivers = driversData.MRData.DriverTable.Drivers;
+    const standingIds = new Set(
+      (cachedStandings?.DriverStandings ?? []).map(s => s.Driver.driverId)
+    );
+    cachedDrivers = standingIds.size > 0
+      ? allDrivers.filter(d => standingIds.has(d.driverId))
+      : allDrivers;
+
+    driversLoader.hidden = true;
+    renderDrivers(cachedDrivers);
+  } catch (err) {
+    driversLoader.hidden = true;
+    showError(driversError, `Could not load drivers: ${err.message}`);
+  }
+}
+
+const NAT_FLAG = {
+  'American':'🇺🇸','Australian':'🇦🇺','Austrian':'🇦🇹','Bahraini':'🇧🇭',
+  'Belgian':'🇧🇪','Brazilian':'🇧🇷','British':'🇬🇧','Canadian':'🇨🇦',
+  'Chinese':'🇨🇳','Colombian':'🇨🇴','Czech':'🇨🇿','Danish':'🇩🇰',
+  'Dutch':'🇳🇱','Finnish':'🇫🇮','French':'🇫🇷','German':'🇩🇪',
+  'Hungarian':'🇭🇺','Indian':'🇮🇳','Indonesian':'🇮🇩','Italian':'🇮🇹',
+  'Japanese':'🇯🇵','Malaysian':'🇲🇾','Mexican':'🇲🇽','Monegasque':'🇲🇨',
+  'New Zealander':'🇳🇿','Polish':'🇵🇱','Portuguese':'🇵🇹','Russian':'🇷🇺',
+  'Saudi Arabian':'🇸🇦','Spanish':'🇪🇸','Swedish':'🇸🇪','Swiss':'🇨🇭',
+  'Thai':'🇹🇭','Venezuelan':'🇻🇪',
+};
+
+function natFlag(nationality) {
+  return NAT_FLAG[nationality] || '🏁';
+}
+
+function renderDrivers(drivers) {
+  document.getElementById('driversMeta').textContent =
+    `${drivers.length} driver${drivers.length !== 1 ? 's' : ''} · ${SEASON} season`;
+
+  const sorted = [...drivers].sort((a, b) =>
+    a.givenName.localeCompare(b.givenName)
+  );
+
+  // We also want to pull in current standings data for points/wins if available
+  const standingsMap = {};
+  if (cachedStandings && cachedStandings.DriverStandings) {
+    cachedStandings.DriverStandings.forEach(s => {
+      standingsMap[s.Driver.driverId] = s;
+    });
+  }
+
+  driversGrid.innerHTML = sorted.map(d => {
+    const name       = `${esc(d.givenName)} ${esc(d.familyName)}`;
+    const nat        = d.nationality || '–';
+    const dob        = d.dateOfBirth ? fmt(d.dateOfBirth) : '–';
+    const num        = d.permanentNumber ? `#${esc(d.permanentNumber)}` : '';
+    const code       = d.code ? `<span class="driver-code">${esc(d.code)}</span>` : '';
+    const standing   = standingsMap[d.driverId];
+    const pts        = standing ? standing.points : '–';
+    const wins       = standing ? standing.wins   : '–';
+    const team       = standing ? (standing.Constructors[0]?.name ?? '–') : '–';
+    const cid        = standing ? (standing.Constructors[0]?.constructorId ?? '') : '';
+    const color      = teamColor(cid);
+    const teamDot    = cid ? `<span class="team-dot" style="background:${color}"></span>` : '';
+
+    const statsHtml = standing ? `
+      <div class="driver-stats">
+        <div class="driver-stat"><span class="stat-label">Team</span><span class="stat-value">${teamDot}${esc(team)}</span></div>
+        <div class="driver-stat"><span class="stat-label">Points</span><span class="stat-value">${esc(String(pts))}</span></div>
+        <div class="driver-stat"><span class="stat-label">Wins</span><span class="stat-value">${esc(String(wins))}</span></div>
+      </div>` : '';
+
+    return `
+      <div class="driver-card">
+        <div class="driver-card-top">
+          <span class="driver-num-badge">${num}</span>${code}
+        </div>
+        <div class="driver-name">${name}</div>
+        <div class="driver-meta">
+          <span class="driver-nat">${natFlag(nat)} ${esc(nat)}</span>
+          <span class="driver-dob">Born ${dob}</span>
+        </div>
+        ${statsHtml}
+      </div>`;
+  }).join('');
+}
+
 // ── Navigation ───────────────────────────────────────────────────
 navSchedule.addEventListener('click', () => {
   showView('schedule');
@@ -482,6 +710,17 @@ navStandings.addEventListener('click', () => {
   showView('standings');
   loadStandings();
   loadConstructorStandings();
+});
+
+navCircuits.addEventListener('click', () => {
+  showView('circuits');
+  loadCircuits();
+});
+
+navDrivers.addEventListener('click', () => {
+  showView('drivers');
+  // Pre-fetch standings so points/wins data is available in the cards
+  loadStandings().then(() => loadDrivers());
 });
 
 backBtn.addEventListener('click', () => {
