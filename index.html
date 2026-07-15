@@ -51,17 +51,32 @@
         <div id="detailError" class="error-banner" hidden></div>
       </section>
 
-      <!-- ── Driver Standings ── -->
+      <!-- ── Driver & Constructor Standings ── -->
       <section id="viewStandings" hidden>
         <div class="section-header">
-          <h2 class="section-title">Driver Championship Standings</h2>
+          <h2 class="section-title">Championship Standings</h2>
           <p class="section-meta" id="standingsMeta"></p>
         </div>
-        <div id="standingsTable" class="table-wrap"></div>
-        <div id="standingsLoader" class="loader-wrap" aria-live="polite">
-          <div class="spinner"></div><span>Fetching standings…</span>
+        <div class="standings-columns">
+          <!-- Driver standings -->
+          <div class="standings-col">
+            <h3 class="standings-col-title">Drivers</h3>
+            <div id="standingsTable" class="table-wrap"></div>
+            <div id="standingsLoader" class="loader-wrap" aria-live="polite">
+              <div class="spinner"></div><span>Fetching driver standings…</span>
+            </div>
+            <div id="standingsError" class="error-banner" hidden></div>
+          </div>
+          <!-- Constructor standings -->
+          <div class="standings-col">
+            <h3 class="standings-col-title">Constructors</h3>
+            <div id="constructorTable" class="table-wrap"></div>
+            <div id="constructorLoader" class="loader-wrap" aria-live="polite">
+              <div class="spinner"></div><span>Fetching constructor standings…</span>
+            </div>
+            <div id="constructorError" class="error-banner" hidden></div>
+          </div>
         </div>
-        <div id="standingsError" class="error-banner" hidden></div>
       </section>
 
     </main>

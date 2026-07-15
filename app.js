@@ -69,17 +69,19 @@ async function fetchJSON(url) {
 }
 
 // ── State ────────────────────────────────────────────────────────
-let cachedSchedule    = null;
-let cachedStandings   = null;
-let cachedResults     = {};   // keyed by round
-let cachedWinners     = {};   // keyed by round → driver name
+let cachedSchedule              = null;
+let cachedStandings             = null;
+let cachedConstructorStandings  = null;
+let cachedResults               = {};   // keyed by round
+let cachedWinners               = {};   // keyed by round → driver name
 
 
 function resetCaches() {
-  cachedSchedule  = null;
-  cachedStandings = null;
-  cachedResults   = {};
-  cachedWinners   = {};
+  cachedSchedule             = null;
+  cachedStandings            = null;
+  cachedConstructorStandings = null;
+  cachedResults              = {};
+  cachedWinners              = {};
 }
 
 
@@ -100,6 +102,10 @@ const detailError       = document.getElementById('detailError');
 const standingsTable  = document.getElementById('standingsTable');
 const standingsLoader = document.getElementById('standingsLoader');
 const standingsError  = document.getElementById('standingsError');
+
+const constructorTable  = document.getElementById('constructorTable');
+const constructorLoader = document.getElementById('constructorLoader');
+const constructorError  = document.getElementById('constructorError');
 
 const navSchedule  = document.getElementById('navSchedule');
 const navStandings = document.getElementById('navStandings');
@@ -358,6 +364,65 @@ async function loadStandings() {
   }
 }
 
+// ── Constructor Standings ─────────────────────────────────────────
+async function loadConstructorStandings() {
+  if (cachedConstructorStandings) { renderConstructorStandings(cachedConstructorStandings); return; }
+  constructorLoader.hidden = false;
+  constructorError.hidden  = true;
+  constructorTable.innerHTML = '';
+
+  try {
+    const data = await fetchJSON(`${BASE}/constructorstandings.json?limit=15`);
+    const list = data.MRData.StandingsTable.StandingsLists[0];
+    cachedConstructorStandings = list;
+    constructorLoader.hidden = true;
+    renderConstructorStandings(list);
+  } catch (err) {
+    constructorLoader.hidden = true;
+    showError(constructorError, `Could not load constructor standings: ${err.message}`);
+  }
+}
+
+function renderConstructorStandings(list) {
+  if (!list) {
+    constructorTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">Constructor standings not yet available for this season.</p>';
+    return;
+  }
+
+  const rows = list.ConstructorStandings.map(s => {
+    const pos      = parseInt(s.position, 10);
+    const posClass = pos <= 3 ? `pos-${pos}` : '';
+    const name     = s.Constructor.name;
+    const cid      = s.Constructor.constructorId;
+    const color    = teamColor(cid);
+    const wins     = s.wins;
+    const pts      = s.points;
+
+    return `
+      <tr>
+        <td class="pos-cell ${posClass}">${esc(s.position)}</td>
+        <td class="team-cell">
+          <span class="team-dot" style="background:${color}"></span>${esc(name)}
+        </td>
+        <td class="pts-cell" style="text-align:center">${esc(wins)}</td>
+        <td class="pts-cell">${esc(pts)}</td>
+      </tr>`;
+  }).join('');
+
+  constructorTable.innerHTML = `
+    <table aria-label="Constructor championship standings">
+      <thead>
+        <tr>
+          <th>Pos</th>
+          <th>Constructor</th>
+          <th style="text-align:center">Wins</th>
+          <th>Points</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 function renderStandings(list) {
   if (!list) {
     standingsTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">Standings not yet available for this season.</p>';
@@ -416,6 +481,7 @@ navSchedule.addEventListener('click', () => {
 navStandings.addEventListener('click', () => {
   showView('standings');
   loadStandings();
+  loadConstructorStandings();
 });
 
 backBtn.addEventListener('click', () => {

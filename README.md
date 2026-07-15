@@ -7,6 +7,7 @@ A lightweight, zero-dependency web app for browsing Formula 1 race results and d
 - **Season Schedule** — full race calendar for any F1 season with round status badges (Completed / Next Race / Upcoming)
 - **Race Results** — detailed finishing order per race: position, driver number, team, grid slot, time/gap/DNF/DSQ, and points scored
 - **Driver Standings** — championship table showing points, wins, nationality, and team after the latest completed round
+- **Constructor Standings** — team championship table displayed alongside driver standings, showing constructor points and wins
 - **Winner preview** — race cards show the race winner (prefetched in the background) without needing to open the detail view
 - **Season selector** — browse historical data from 1950 through the current year
 - **Team colours** — colour-coded team dots matching official 2025 livery, with fallbacks for legacy constructors

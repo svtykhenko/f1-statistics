@@ -392,6 +392,27 @@ tbody td {
 }
 .error-banner[hidden] { display: none; }
 
+/* ─── Standings two-column layout ───────────────────────────────── */
+.standings-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.standings-col-title {
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+@media (max-width: 860px) {
+  .standings-columns { grid-template-columns: 1fr; gap: 40px; }
+}
+
 /* ─── Footer ────────────────────────────────────────────────────── */
 .site-footer {
   text-align: center;
