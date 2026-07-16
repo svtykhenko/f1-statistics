@@ -20,7 +20,7 @@
         <nav class="header-nav">
           <select id="seasonSelect" class="season-select" aria-label="Select season"></select>
           <button class="nav-btn active" id="navSchedule" aria-pressed="true">Season Schedule</button>
-          <button class="nav-btn" id="navStandings" aria-pressed="false">Driver Standings</button>
+          <button class="nav-btn" id="navStandings" aria-pressed="false">Championship Standings</button>
           <button class="nav-btn" id="navCircuits" aria-pressed="false">Circuits</button>
           <button class="nav-btn" id="navDrivers" aria-pressed="false">Drivers</button>
         </nav>
@@ -46,11 +46,18 @@
       <section id="viewDetail" hidden>
         <button class="back-btn" id="backBtn">← Back to calendar</button>
         <div id="raceDetailHeader" class="detail-header"></div>
-        <div id="raceResultsTable" class="table-wrap"></div>
-        <div id="detailLoader" class="loader-wrap" aria-live="polite">
-          <div class="spinner"></div><span>Fetching race results…</span>
+
+        <!-- Session tabs -->
+        <nav class="session-tabs" id="sessionTabs" role="tablist" aria-label="Race sessions"></nav>
+
+        <!-- Tab panels -->
+        <div id="sessionPanel" class="session-panel">
+          <div id="raceResultsTable" class="table-wrap"></div>
+          <div id="detailLoader" class="loader-wrap" aria-live="polite">
+            <div class="spinner"></div><span>Loading…</span>
+          </div>
+          <div id="detailError" class="error-banner" hidden></div>
         </div>
-        <div id="detailError" class="error-banner" hidden></div>
       </section>
 
       <!-- ── Driver & Constructor Standings ── -->
@@ -132,7 +139,9 @@
     </div>
 
     <footer class="site-footer">
-      Data provided by <a href="https://jolpi.ca/ergast" target="_blank" rel="noopener">Jolpica F1 API</a> (Ergast-compatible)
+      Race, qualifying &amp; sprint data: <a href="https://jolpi.ca/ergast" target="_blank" rel="noopener">Jolpica F1 API</a> (primary) /
+      <a href="https://ergast.com/mrd/" target="_blank" rel="noopener">Ergast</a> (fallback) ·
+      Practice data: <a href="https://openf1.org" target="_blank" rel="noopener">OpenF1 API</a>
     </footer>
 
     <script src="app.js"></script>

@@ -1,11 +1,13 @@
 /* ─────────────────────────────────────────────────────────────────
    F1 Race Results  –  app.js
-   API: Jolpica (Ergast-compatible)  https://api.jolpi.ca/ergast/f1/
+   Primary API  : Jolpica  https://api.jolpi.ca/ergast/f1/
+   Fallback API : Ergast   https://ergast.com/api/f1/
    ───────────────────────────────────────────────────────────────── */
 
-const CURRENT_YEAR = new Date().getFullYear();
-let   SEASON       = CURRENT_YEAR;
-let   BASE         = `https://api.jolpi.ca/ergast/f1/${SEASON}`;
+const CURRENT_YEAR   = new Date().getFullYear();
+let   SEASON         = CURRENT_YEAR;
+let   BASE           = `https://api.jolpi.ca/ergast/f1/${SEASON}`;
+const ERGAST_BASE_ROOT = 'https://ergast.com/api/f1';
 
 // ── Team colours (constructor IDs → hex) ─────────────────────────
 const TEAM_COLORS = {
@@ -68,6 +70,31 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+/**
+ * Fetch from the primary Jolpica URL; if it fails (network error or non-2xx),
+ * retry the equivalent path on the Ergast fallback host.
+ *
+ * Both APIs share the same path/query-string convention, so we only need to
+ * swap the host prefix.
+ *
+ * @param {string} primaryUrl  - Full URL starting with BASE or api.jolpi.ca
+ * @returns {Promise<any>}
+ */
+async function fetchWithFallback(primaryUrl) {
+  try {
+    return await fetchJSON(primaryUrl);
+  } catch (primaryErr) {
+    // Derive the fallback URL by replacing the Jolpica root with Ergast root.
+    // e.g. https://api.jolpi.ca/ergast/f1/2025/races.json?limit=30
+    //   → https://ergast.com/api/f1/2025/races.json?limit=30
+    const fallbackUrl = primaryUrl
+      .replace(/^https?:\/\/api\.jolpi\.ca\/ergast\/f1/, ERGAST_BASE_ROOT);
+    if (fallbackUrl === primaryUrl) throw primaryErr; // no substitution possible
+    console.warn(`[F1] Primary source failed (${primaryErr.message}). Retrying via Ergast fallback…`);
+    return await fetchJSON(fallbackUrl);
+  }
+}
+
 // ── State ────────────────────────────────────────────────────────
 let cachedSchedule              = null;
 let cachedStandings             = null;
@@ -76,6 +103,8 @@ let cachedCircuits              = null;
 let cachedDrivers               = null;
 let cachedResults               = {};   // keyed by round
 let cachedWinners               = {};   // keyed by round → driver name
+let cachedSessions              = {};   // keyed by `${round}:sessionKey`
+let cachedMeetingKeys           = {};   // keyed by round → OpenF1 meeting_key
 
 
 function resetCaches() {
@@ -86,6 +115,8 @@ function resetCaches() {
   cachedDrivers              = null;
   cachedResults              = {};
   cachedWinners              = {};
+  cachedSessions             = {};
+  cachedMeetingKeys          = {};
   Object.keys(cachedCareer).forEach(k => delete cachedCareer[k]);
 }
 
@@ -160,7 +191,7 @@ async function loadSchedule() {
   raceGrid.innerHTML    = '';
 
   try {
-    const data = await fetchJSON(`${BASE}/races.json?limit=30`);
+    const data = await fetchWithFallback(`${BASE}/races.json?limit=30`);
     cachedSchedule = data.MRData.RaceTable.Races;
     scheduleLoader.hidden = true;
     renderSchedule(cachedSchedule);
@@ -181,7 +212,7 @@ async function prefetchWinners(races) {
     if (cachedWinners[round] !== undefined) continue;
 
     try {
-      const data = await fetchJSON(`${BASE}/${round}/results.json?limit=1`);
+      const data = await fetchWithFallback(`${BASE}/${round}/results.json?limit=1`);
       const res  = data.MRData.RaceTable.Races[0]?.Results?.[0];
       if (res) {
         const name = `${res.Driver.givenName} ${res.Driver.familyName}`;
@@ -263,12 +294,19 @@ function renderSchedule(races) {
 }
 
 // ── Race Detail ─────────────────────────────────────────────────
+
+const sessionTabs = document.getElementById('sessionTabs');
+
+let currentRace = null; // the race object currently shown in detail view
+
 async function loadDetail(race) {
+  currentRace = race;
   showView('detail');
-  detailLoader.hidden  = false;
-  detailError.hidden   = true;
   raceResultsTable.innerHTML = '';
   raceDetailHeader.innerHTML = '';
+  sessionTabs.innerHTML = '';
+  detailLoader.hidden = true;
+  detailError.hidden  = true;
 
   raceDetailHeader.innerHTML = `
     <div class="detail-round">Round ${esc(race.round)} · ${SEASON}</div>
@@ -280,25 +318,104 @@ async function loadDetail(race) {
     </div>
   `;
 
-  if (cachedResults[race.round]) {
-    renderResults(cachedResults[race.round]);
-    detailLoader.hidden = true;
+  // Build the ordered list of sessions that exist for this weekend
+  const isSprint = !!(race.Sprint);
+  const sessions = [
+    { key: 'race',   label: '🏁 Race' },
+    { key: 'quali',  label: '⏱ Qualifying' },
+    ...(isSprint ? [
+      { key: 'sprint',      label: '🏃 Sprint' },
+      { key: 'sprintquali', label: '🔥 Sprint Shoot-out' },
+    ] : []),
+    { key: 'fp1', label: 'FP1', disabled: !race.FirstPractice },
+    ...(!isSprint ? [
+      { key: 'fp2', label: 'FP2', disabled: !race.SecondPractice },
+      { key: 'fp3', label: 'FP3', disabled: !race.ThirdPractice },
+    ] : []),
+  ];
+
+  sessions.forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'session-tab';
+    btn.textContent = s.label;
+    btn.dataset.session = s.key;
+    btn.setAttribute('role', 'tab');
+    if (s.disabled) {
+      btn.disabled = true;
+    } else {
+      btn.addEventListener('click', () => switchSession(race, s.key));
+    }
+    sessionTabs.appendChild(btn);
+  });
+
+  switchSession(race, 'race');
+}
+
+function setActiveTab(key) {
+  sessionTabs.querySelectorAll('.session-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.session === key);
+    btn.setAttribute('aria-selected', String(btn.dataset.session === key));
+  });
+}
+
+async function switchSession(race, sessionKey) {
+  setActiveTab(sessionKey);
+  raceResultsTable.innerHTML = '';
+  detailError.hidden = true;
+
+  const cacheKey = `${race.round}:${sessionKey}`;
+  if (cachedSessions[cacheKey] !== undefined) {
+    renderSession(sessionKey, cachedSessions[cacheKey], race);
     return;
   }
 
+  detailLoader.hidden = false;
+
   try {
-    const data    = await fetchJSON(`${BASE}/${race.round}/results.json?limit=25`);
-    const results = data.MRData.RaceTable.Races[0]?.Results ?? [];
-    cachedResults[race.round] = results;
+    let data;
+    if (sessionKey === 'race') {
+      data = await loadRaceResults(race);
+    } else if (sessionKey === 'quali') {
+      data = await loadQualifying(race);
+    } else if (sessionKey === 'sprint') {
+      data = await loadSprint(race);
+    } else if (sessionKey === 'sprintquali') {
+      data = await loadSprintQuali(race);
+    } else if (sessionKey === 'fp1') {
+      data = await loadPractice(race, 1);
+    } else if (sessionKey === 'fp2') {
+      data = await loadPractice(race, 2);
+    } else if (sessionKey === 'fp3') {
+      data = await loadPractice(race, 3);
+    }
+    cachedSessions[cacheKey] = data;
     detailLoader.hidden = true;
-    renderResults(results);
+    renderSession(sessionKey, data, race);
   } catch (err) {
     detailLoader.hidden = true;
-    showError(detailError, `Could not load results: ${err.message}`);
+    showError(detailError, `Could not load session data: ${err.message}`);
   }
 }
 
-function renderResults(results) {
+function renderSession(sessionKey, data, race) {
+  if (sessionKey === 'race')        return renderResults(data, race);
+  if (sessionKey === 'quali')       return renderQualifying(data);
+  if (sessionKey === 'sprint')      return renderSprintResults(data);
+  if (sessionKey === 'sprintquali') return renderSprintQuali(data);
+  if (sessionKey === 'fp1' || sessionKey === 'fp2' || sessionKey === 'fp3')
+    return renderPractice(data);
+}
+
+// ── Race Results ─────────────────────────────────────────────────
+async function loadRaceResults(race) {
+  const data    = await fetchWithFallback(`${BASE}/${race.round}/results.json?limit=25`);
+  const results = data.MRData.RaceTable.Races[0]?.Results ?? [];
+  // back-compat: also populate old cachedResults for prefetchWinners
+  cachedResults[race.round] = results;
+  return results;
+}
+
+function renderResults(results, race) {
   if (!results.length) {
     raceResultsTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">No result data available yet.</p>';
     return;
@@ -306,9 +423,9 @@ function renderResults(results) {
 
   const laps      = results[0]?.laps ?? '–';
   const totalTime = results[0]?.Time?.time ?? '–';
-  const totalLaps = document.querySelector('.detail-meta-row');
-  if (totalLaps) {
-    totalLaps.insertAdjacentHTML('beforeend',
+  const metaRow   = document.querySelector('.detail-meta-row');
+  if (metaRow) {
+    metaRow.insertAdjacentHTML('beforeend',
       `<span class="detail-meta-item">🔄 <strong>${esc(String(laps))} laps</strong></span>` +
       `<span class="detail-meta-item">⏱ <strong>${esc(totalTime)}</strong> (winner)</span>`
     );
@@ -343,9 +460,7 @@ function renderResults(results) {
       <tr>
         <td class="pos-cell ${posClass}">${esc(r.position)}</td>
         <td class="driver-cell"><span class="driver-num">${esc(r.number)}</span>${esc(name)}</td>
-        <td class="team-cell">
-          <span class="team-dot" style="background:${color}"></span>${esc(team)}
-        </td>
+        <td class="team-cell"><span class="team-dot" style="background:${color}"></span>${esc(team)}</td>
         <td>${esc(String(grid))}</td>
         <td>${timeCell}</td>
         <td class="pts-cell">${esc(pts)}</td>
@@ -354,16 +469,277 @@ function renderResults(results) {
 
   raceResultsTable.innerHTML = `
     <table aria-label="Race results">
-      <thead>
-        <tr>
-          <th>Pos</th>
-          <th>Driver</th>
-          <th>Team</th>
-          <th>Grid</th>
-          <th>Time / Status</th>
-          <th>Pts</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th>Pos</th><th>Driver</th><th>Team</th><th>Grid</th><th>Time / Status</th><th>Pts</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Qualifying ───────────────────────────────────────────────────
+async function loadQualifying(race) {
+  const data = await fetchWithFallback(`${BASE}/${race.round}/qualifying.json?limit=25`);
+  return data.MRData.RaceTable.Races[0]?.QualifyingResults ?? [];
+}
+
+function renderQualifying(results) {
+  if (!results.length) {
+    raceResultsTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">Qualifying data not yet available.</p>';
+    return;
+  }
+  const rows = results.map(r => {
+    const pos      = parseInt(r.position, 10);
+    const posClass = pos <= 3 ? `pos-${pos}` : '';
+    const name     = `${r.Driver.givenName} ${r.Driver.familyName}`;
+    const cid      = r.Constructor.constructorId;
+    const color    = teamColor(cid);
+    const q1       = r.Q1 || '–';
+    const q2       = r.Q2 || '–';
+    const q3       = r.Q3 || '–';
+    return `
+      <tr>
+        <td class="pos-cell ${posClass}">${esc(r.position)}</td>
+        <td class="driver-cell"><span class="driver-num">${esc(r.number)}</span>${esc(name)}</td>
+        <td class="team-cell"><span class="team-dot" style="background:${color}"></span>${esc(r.Constructor.name)}</td>
+        <td class="time-cell">${esc(q1)}</td>
+        <td class="time-cell">${esc(q2)}</td>
+        <td class="time-cell">${esc(q3)}</td>
+      </tr>`;
+  }).join('');
+  raceResultsTable.innerHTML = `
+    <table aria-label="Qualifying results">
+      <thead><tr>
+        <th>Pos</th><th>Driver</th><th>Team</th><th>Q1</th><th>Q2</th><th>Q3</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Sprint Race ──────────────────────────────────────────────────
+async function loadSprint(race) {
+  const data = await fetchWithFallback(`${BASE}/${race.round}/sprint.json?limit=25`);
+  return data.MRData.RaceTable.Races[0]?.SprintResults ?? [];
+}
+
+function renderSprintResults(results) {
+  if (!results.length) {
+    raceResultsTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">Sprint data not yet available.</p>';
+    return;
+  }
+  const rows = results.map(r => {
+    const pos       = parseInt(r.position, 10);
+    const posClass  = pos <= 3 ? `pos-${pos}` : '';
+    const name      = `${r.Driver.givenName} ${r.Driver.familyName}`;
+    const cid       = r.Constructor.constructorId;
+    const color     = teamColor(cid);
+    const time      = r.Time?.time ?? null;
+    const status    = r.status;
+
+    let timeCell;
+    if (pos === 1 && time) {
+      timeCell = `<span class="time-cell">${esc(time)}</span>`;
+    } else if (time) {
+      timeCell = `<span class="time-cell">+${esc(time)}</span>`;
+    } else if (/DSQ/i.test(status)) {
+      timeCell = `<span class="status-dsq">DSQ</span>`;
+    } else if (status !== 'Finished') {
+      timeCell = `<span class="status-dnf">DNF <small>(${esc(status)})</small></span>`;
+    } else {
+      timeCell = `<span class="time-cell">–</span>`;
+    }
+
+    return `
+      <tr>
+        <td class="pos-cell ${posClass}">${esc(r.position)}</td>
+        <td class="driver-cell"><span class="driver-num">${esc(r.number)}</span>${esc(name)}</td>
+        <td class="team-cell"><span class="team-dot" style="background:${color}"></span>${esc(r.Constructor.name)}</td>
+        <td>${esc(String(r.grid))}</td>
+        <td>${timeCell}</td>
+        <td class="pts-cell">${esc(r.points)}</td>
+      </tr>`;
+  }).join('');
+  raceResultsTable.innerHTML = `
+    <table aria-label="Sprint race results">
+      <thead><tr>
+        <th>Pos</th><th>Driver</th><th>Team</th><th>Grid</th><th>Time / Status</th><th>Pts</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Sprint Qualifying (Shoot-out) ────────────────────────────────
+async function loadSprintQuali(race) {
+  // Jolpica exposes sprint qualifying under /sprintqualifying
+  const data = await fetchWithFallback(`${BASE}/${race.round}/sprintqualifying.json?limit=25`);
+  return data.MRData.RaceTable.Races[0]?.SprintQualifyingResults ?? [];
+}
+
+function renderSprintQuali(results) {
+  if (!results.length) {
+    raceResultsTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">Sprint shoot-out data not yet available.</p>';
+    return;
+  }
+  const rows = results.map(r => {
+    const pos      = parseInt(r.position, 10);
+    const posClass = pos <= 3 ? `pos-${pos}` : '';
+    const name     = `${r.Driver.givenName} ${r.Driver.familyName}`;
+    const cid      = r.Constructor.constructorId;
+    const color    = teamColor(cid);
+    return `
+      <tr>
+        <td class="pos-cell ${posClass}">${esc(r.position)}</td>
+        <td class="driver-cell"><span class="driver-num">${esc(r.number)}</span>${esc(name)}</td>
+        <td class="team-cell"><span class="team-dot" style="background:${color}"></span>${esc(r.Constructor.name)}</td>
+        <td class="time-cell">${esc(r.SQ1 || '–')}</td>
+        <td class="time-cell">${esc(r.SQ2 || '–')}</td>
+        <td class="time-cell">${esc(r.SQ3 || '–')}</td>
+      </tr>`;
+  }).join('');
+  raceResultsTable.innerHTML = `
+    <table aria-label="Sprint shoot-out results">
+      <thead><tr>
+        <th>Pos</th><th>Driver</th><th>Team</th><th>SQ1</th><th>SQ2</th><th>SQ3</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Practice (via OpenF1) ────────────────────────────────────────
+// OpenF1 is the only source with practice timing data.
+// Strategy: resolve meeting_key from schedule year+round, get session_key,
+//           fetch all laps + drivers in parallel, compute best lap per driver.
+
+const OPENF1 = 'https://api.openf1.org/v1';
+
+async function resolveMeetingKey(race) {
+  if (cachedMeetingKeys[race.round]) return cachedMeetingKeys[race.round];
+  // OpenF1 year param matches Ergast season
+  const data = await fetchJSON(`${OPENF1}/meetings?year=${SEASON}`);
+  // Match by circuit country/locality or race name (fuzzy: lowercase includes)
+  const raceName = race.raceName.toLowerCase();
+  const country  = race.Circuit.Location.country.toLowerCase();
+  const locality = race.Circuit.Location.locality.toLowerCase();
+
+  let meeting = data.find(m => {
+    const mn = (m.meeting_name || '').toLowerCase();
+    const cn = (m.country_name || '').toLowerCase();
+    const loc = (m.location || '').toLowerCase();
+    return mn.includes(country) || cn.includes(country) ||
+           loc.includes(locality) || mn.includes(locality);
+  });
+  if (!meeting) {
+    // fallback: pick by round index (meetings are ordered)
+    const sortedMeetings = data
+      .filter(m => !m.meeting_name.toLowerCase().includes('test'))
+      .sort((a, b) => new Date(a.date_start) - new Date(b.date_start));
+    meeting = sortedMeetings[parseInt(race.round, 10) - 1];
+  }
+  if (!meeting) throw new Error('Could not find OpenF1 meeting for this round');
+  cachedMeetingKeys[race.round] = meeting.meeting_key;
+  return meeting.meeting_key;
+}
+
+async function loadPractice(race, fpNum) {
+  const sessionName = `Practice ${fpNum}`;
+  const meetingKey  = await resolveMeetingKey(race);
+
+  // Get session_key for this practice session
+  const sessions = await fetchJSON(`${OPENF1}/sessions?meeting_key=${meetingKey}&session_name=${encodeURIComponent(sessionName)}`);
+  if (!sessions.length) return [];
+  const sessionKey = sessions[0].session_key;
+
+  // Fetch laps + driver info in parallel
+  const [lapsData, driversData] = await Promise.all([
+    fetchJSON(`${OPENF1}/laps?session_key=${sessionKey}`),
+    fetchJSON(`${OPENF1}/drivers?session_key=${sessionKey}`),
+  ]);
+
+  // Build driver lookup: number → { name, team, teamColour }
+  const driverMap = {};
+  driversData.forEach(d => {
+    driverMap[d.driver_number] = {
+      name:       d.full_name || d.name_acronym || String(d.driver_number),
+      acronym:    d.name_acronym || '',
+      team:       d.team_name || '–',
+      teamColour: d.team_colour ? `#${d.team_colour}` : '#888',
+    };
+  });
+
+  // Compute best valid lap per driver (exclude deleted/pit laps)
+  const bestLap = {};
+  lapsData.forEach(lap => {
+    if (!lap.lap_duration || lap.is_pit_out_lap) return;
+    const dn = lap.driver_number;
+    if (!(dn in bestLap) || lap.lap_duration < bestLap[dn].duration) {
+      bestLap[dn] = { duration: lap.lap_duration, lapNum: lap.lap_number };
+    }
+  });
+
+  // Sort by best lap time; drivers with no recorded lap go to the bottom
+  const ranked = Object.entries(bestLap)
+    .sort((a, b) => a[1].duration - b[1].duration)
+    .map(([driverNumber, lap], idx) => ({
+      pos:          idx + 1,
+      driverNumber: Number(driverNumber),
+      ...driverMap[driverNumber],
+      duration:     lap.duration,
+      lapNum:       lap.lapNum,
+    }));
+
+  // Append drivers with no lap time at the bottom
+  const rankedNums = new Set(ranked.map(r => r.driverNumber));
+  driversData.forEach(d => {
+    if (!rankedNums.has(d.driver_number)) {
+      ranked.push({
+        pos:          '–',
+        driverNumber: d.driver_number,
+        ...driverMap[d.driver_number],
+        duration:     null,
+        lapNum:       null,
+      });
+    }
+  });
+
+  return ranked;
+}
+
+function fmtLapTime(secs) {
+  if (secs == null) return '–';
+  const m = Math.floor(secs / 60);
+  const s = secs - m * 60;
+  return `${m}:${s.toFixed(3).padStart(6, '0')}`;
+}
+
+function renderPractice(ranked) {
+  if (!ranked.length) {
+    raceResultsTable.innerHTML = '<p style="color:var(--muted);padding:20px 0">Practice data not yet available.</p>';
+    return;
+  }
+
+  const leaderTime = ranked[0]?.duration ?? null;
+
+  const rows = ranked.map((r, i) => {
+    const pos      = r.pos;
+    const posClass = typeof pos === 'number' && pos <= 3 ? `pos-${pos}` : '';
+    const gap      = (leaderTime && r.duration && i > 0)
+      ? `+${(r.duration - leaderTime).toFixed(3)}`
+      : (i === 0 ? fmtLapTime(r.duration) : '–');
+    const best     = i === 0 ? fmtLapTime(r.duration) : gap;
+    return `
+      <tr>
+        <td class="pos-cell ${posClass}">${esc(String(pos))}</td>
+        <td class="driver-cell"><span class="driver-num">#${esc(String(r.driverNumber))}</span>${esc(r.name)}</td>
+        <td class="team-cell"><span class="team-dot" style="background:${r.teamColour}"></span>${esc(r.team)}</td>
+        <td class="time-cell">${esc(fmtLapTime(r.duration))}</td>
+        <td class="time-cell" style="color:var(--muted)">${i === 0 ? '' : esc(gap)}</td>
+      </tr>`;
+  }).join('');
+
+  raceResultsTable.innerHTML = `
+    <table aria-label="Practice results">
+      <thead><tr>
+        <th>Pos</th><th>Driver</th><th>Team</th><th>Best Lap</th><th>Gap</th>
+      </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
@@ -376,7 +752,7 @@ async function loadStandings() {
   standingsTable.innerHTML = '';
 
   try {
-    const data = await fetchJSON(`${BASE}/driverstandings.json?limit=25`);
+    const data = await fetchWithFallback(`${BASE}/driverstandings.json?limit=25`);
     const list = data.MRData.StandingsTable.StandingsLists[0];
     cachedStandings = list;
     standingsLoader.hidden = true;
@@ -395,7 +771,7 @@ async function loadConstructorStandings() {
   constructorTable.innerHTML = '';
 
   try {
-    const data = await fetchJSON(`${BASE}/constructorstandings.json?limit=15`);
+    const data = await fetchWithFallback(`${BASE}/constructorstandings.json?limit=15`);
     const list = data.MRData.StandingsTable.StandingsLists[0];
     cachedConstructorStandings = list;
     constructorLoader.hidden = true;
@@ -504,7 +880,7 @@ async function loadCircuits() {
 
   try {
     // Fetch all circuits (API returns up to 1000 with limit=1000)
-    const data = await fetchJSON('https://api.jolpi.ca/ergast/f1/circuits.json?limit=1000');
+    const data = await fetchWithFallback('https://api.jolpi.ca/ergast/f1/circuits.json?limit=1000');
     cachedCircuits = data.MRData.CircuitTable.Circuits;
     circuitsLoader.hidden = true;
     renderCircuits(cachedCircuits);
@@ -609,8 +985,8 @@ async function loadDrivers() {
 
   try {
     const [driversData, standingsData] = await Promise.all([
-      fetchJSON(`${BASE}/drivers.json?limit=100`),
-      cachedStandings ? Promise.resolve(null) : fetchJSON(`${BASE}/driverstandings.json?limit=100`),
+      fetchWithFallback(`${BASE}/drivers.json?limit=100`),
+      cachedStandings ? Promise.resolve(null) : fetchWithFallback(`${BASE}/driverstandings.json?limit=100`),
     ]);
 
     if (standingsData) {
@@ -777,11 +1153,11 @@ async function fetchCareerStats(driverId) {
   // The filtered endpoints (results/1, grid/1, etc.) return just a `total`
   // count when limit=1, so these are tiny fast requests.
   const [winsRes, p2Res, p3Res, polesRes, seasonsRes] = await Promise.all([
-    fetchJSON(`${base}/results/1.json?limit=1`),          // wins
-    fetchJSON(`${base}/results/2.json?limit=1`),          // P2 finishes
-    fetchJSON(`${base}/results/3.json?limit=1`),          // P3 finishes
-    fetchJSON(`${base}/grid/1/results.json?limit=1`),     // pole positions
-    fetchJSON(`${base}/seasons.json?limit=100`),          // career seasons
+    fetchWithFallback(`${base}/results/1.json?limit=1`),          // wins
+    fetchWithFallback(`${base}/results/2.json?limit=1`),          // P2 finishes
+    fetchWithFallback(`${base}/results/3.json?limit=1`),          // P3 finishes
+    fetchWithFallback(`${base}/grid/1/results.json?limit=1`),     // pole positions
+    fetchWithFallback(`${base}/seasons.json?limit=100`),          // career seasons
   ]);
 
   const wins    = parseInt(winsRes.MRData.total, 10);
@@ -796,7 +1172,7 @@ async function fetchCareerStats(driverId) {
   // Championships = seasons where position === "1".
   // These are tiny single-driver responses; fire them all in parallel.
   const standingReqs = seasonList.map(s =>
-    fetchJSON(`https://api.jolpi.ca/ergast/f1/${s.season}/drivers/${driverId}/driverstandings.json?limit=1`)
+    fetchWithFallback(`https://api.jolpi.ca/ergast/f1/${s.season}/drivers/${driverId}/driverstandings.json?limit=1`)
       .catch(() => null)   // ignore seasons where standing is not yet available
   );
   const standingPages = await Promise.all(standingReqs);
@@ -807,14 +1183,14 @@ async function fetchCareerStats(driverId) {
   }).length;
 
   // Phase 3: total races and career points — paginate results (max 100/page).
-  const firstPage  = await fetchJSON(`${base}/results.json?limit=100&offset=0`);
+  const firstPage  = await fetchWithFallback(`${base}/results.json?limit=100&offset=0`);
   const totalRaces = parseInt(firstPage.MRData.total, 10);
   let   races      = [...(firstPage.MRData.RaceTable.Races ?? [])];
 
   if (totalRaces > 100) {
     const pagePromises = [];
     for (let offset = 100; offset < totalRaces; offset += 100) {
-      pagePromises.push(fetchJSON(`${base}/results.json?limit=100&offset=${offset}`));
+      pagePromises.push(fetchWithFallback(`${base}/results.json?limit=100&offset=${offset}`));
     }
     const pages = await Promise.all(pagePromises);
     pages.forEach(p => { races = races.concat(p.MRData.RaceTable.Races ?? []); });

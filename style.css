@@ -324,6 +324,39 @@ a:hover { text-decoration: underline; }
 }
 .detail-meta-item strong { color: var(--off-white); font-weight: 600; }
 
+/* ─── Session tabs ──────────────────────────────────────────────── */
+.session-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.session-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  font-size: .82rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: .04em;
+  transition: color .15s, border-color .15s;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.session-tab:hover { color: var(--off-white); }
+.session-tab.active { color: var(--red); border-bottom-color: var(--red); }
+.session-tab[disabled] {
+  opacity: .35;
+  cursor: default;
+}
+
+.session-panel { min-height: 80px; }
+
 /* ─── Tables ────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
 
