@@ -86,6 +86,7 @@ function resetCaches() {
   cachedDrivers              = null;
   cachedResults              = {};
   cachedWinners              = {};
+  Object.keys(cachedCareer).forEach(k => delete cachedCareer[k]);
 }
 
 
@@ -686,7 +687,7 @@ function renderDrivers(drivers) {
       </div>` : '';
 
     return `
-      <div class="driver-card">
+      <div class="driver-card" role="button" tabindex="0" data-driver-id="${esc(d.driverId)}" style="cursor:pointer">
         <div class="driver-card-top">
           <span class="driver-num-badge">${num}</span>${code}
         </div>
@@ -698,6 +699,162 @@ function renderDrivers(drivers) {
         ${statsHtml}
       </div>`;
   }).join('');
+
+  // Attach click (and keyboard) listeners to each card
+  driversGrid.querySelectorAll('.driver-card').forEach(card => {
+    const handler = () => openDriverModal(
+      sorted.find(d => d.driverId === card.dataset.driverId),
+      standingsMap[card.dataset.driverId] || null
+    );
+    card.addEventListener('click', handler);
+    card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handler(); } });
+  });
+}
+
+// ── Driver stats modal ────────────────────────────────────────────
+
+const driverModal  = document.getElementById('driverModal');
+const modalClose   = document.getElementById('modalClose');
+const modalLoader  = document.getElementById('modalLoader');
+const modalError   = document.getElementById('modalError');
+const modalStats   = document.getElementById('modalStats');
+
+// Per-driver career cache  { driverId → { championships, seasons, races, wins, podiums, poles, avgPts } }
+const cachedCareer = {};
+
+function closeDriverModal() {
+  driverModal.hidden = true;
+  document.body.style.overflow = '';
+}
+
+modalClose.addEventListener('click', closeDriverModal);
+driverModal.addEventListener('click', e => { if (e.target === driverModal) closeDriverModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !driverModal.hidden) closeDriverModal(); });
+
+async function openDriverModal(driver, standing) {
+  // Populate static info immediately
+  document.getElementById('modalNum').textContent  = driver.permanentNumber ? `#${driver.permanentNumber}` : '';
+  document.getElementById('modalCode').textContent = driver.code || '';
+  document.getElementById('modalDriverName').textContent = `${driver.givenName} ${driver.familyName}`;
+  document.getElementById('modalNat').textContent  = `${natFlag(driver.nationality || '')} ${driver.nationality || '–'}`;
+  document.getElementById('modalDob').textContent  = driver.dateOfBirth ? `Born ${fmt(driver.dateOfBirth)}` : '';
+
+  const teamEl = document.getElementById('modalTeam');
+  if (standing) {
+    const cid   = standing.Constructors[0]?.constructorId ?? '';
+    const tname = standing.Constructors[0]?.name ?? '–';
+    const color = teamColor(cid);
+    teamEl.innerHTML = cid
+      ? `<span class="team-dot" style="background:${color}"></span>${esc(tname)}`
+      : esc(tname);
+  } else {
+    teamEl.textContent = '';
+  }
+
+  // Show modal, reset inner state
+  driverModal.hidden = false;
+  document.body.style.overflow = 'hidden';
+  modalLoader.hidden = false;
+  modalError.hidden  = true;
+  modalStats.hidden  = true;
+  modalStats.innerHTML = '';
+
+  try {
+    const stats = await fetchCareerStats(driver.driverId);
+    renderDriverModalStats(stats, standing);
+  } catch (err) {
+    modalLoader.hidden = true;
+    showError(modalError, `Could not load career stats: ${err.message}`);
+  }
+}
+
+async function fetchCareerStats(driverId) {
+  if (cachedCareer[driverId]) return cachedCareer[driverId];
+
+  const base = `https://api.jolpi.ca/ergast/f1/drivers/${driverId}`;
+
+  // Phase 1: fetch aggregate totals + seasons list in parallel.
+  // The filtered endpoints (results/1, grid/1, etc.) return just a `total`
+  // count when limit=1, so these are tiny fast requests.
+  const [winsRes, p2Res, p3Res, polesRes, seasonsRes] = await Promise.all([
+    fetchJSON(`${base}/results/1.json?limit=1`),          // wins
+    fetchJSON(`${base}/results/2.json?limit=1`),          // P2 finishes
+    fetchJSON(`${base}/results/3.json?limit=1`),          // P3 finishes
+    fetchJSON(`${base}/grid/1/results.json?limit=1`),     // pole positions
+    fetchJSON(`${base}/seasons.json?limit=100`),          // career seasons
+  ]);
+
+  const wins    = parseInt(winsRes.MRData.total, 10);
+  const p2      = parseInt(p2Res.MRData.total, 10);
+  const p3      = parseInt(p3Res.MRData.total, 10);
+  const podiums = wins + p2 + p3;
+  const poles   = parseInt(polesRes.MRData.total, 10);
+  const seasonList = seasonsRes.MRData.SeasonTable.Seasons ?? [];
+  const seasons    = seasonList.length;
+
+  // Phase 2: for each career season fetch the driver's final standing (position).
+  // Championships = seasons where position === "1".
+  // These are tiny single-driver responses; fire them all in parallel.
+  const standingReqs = seasonList.map(s =>
+    fetchJSON(`https://api.jolpi.ca/ergast/f1/${s.season}/drivers/${driverId}/driverstandings.json?limit=1`)
+      .catch(() => null)   // ignore seasons where standing is not yet available
+  );
+  const standingPages = await Promise.all(standingReqs);
+  const championships = standingPages.filter(res => {
+    if (!res) return false;
+    const sl = res.MRData?.StandingsTable?.StandingsLists?.[0];
+    return sl?.DriverStandings?.[0]?.position === '1';
+  }).length;
+
+  // Phase 3: total races and career points — paginate results (max 100/page).
+  const firstPage  = await fetchJSON(`${base}/results.json?limit=100&offset=0`);
+  const totalRaces = parseInt(firstPage.MRData.total, 10);
+  let   races      = [...(firstPage.MRData.RaceTable.Races ?? [])];
+
+  if (totalRaces > 100) {
+    const pagePromises = [];
+    for (let offset = 100; offset < totalRaces; offset += 100) {
+      pagePromises.push(fetchJSON(`${base}/results.json?limit=100&offset=${offset}`));
+    }
+    const pages = await Promise.all(pagePromises);
+    pages.forEach(p => { races = races.concat(p.MRData.RaceTable.Races ?? []); });
+  }
+
+  let totalPoints = 0;
+  races.forEach(race => {
+    totalPoints += parseFloat(race.Results?.[0]?.points) || 0;
+  });
+
+  const avgPts = races.length > 0 ? (totalPoints / races.length).toFixed(2) : '–';
+
+  const stats = { championships, seasons, totalRaces: races.length, wins, podiums, poles, totalPoints, avgPts };
+  cachedCareer[driverId] = stats;
+  return stats;
+}
+
+function renderDriverModalStats(stats, standing) {
+  const seasonPts  = standing ? standing.points : null;
+  const seasonPos  = standing ? standing.position : null;
+
+  const boxes = [
+    { label: 'Championships', value: stats.championships, cls: stats.championships > 0 ? 'champ' : '', sub: stats.championships > 0 ? '🏆' : '' },
+    { label: 'Seasons',       value: stats.seasons,       sub: 'in F1' },
+    { label: 'Races',         value: stats.totalRaces,    sub: 'career starts' },
+    { label: 'Wins',          value: stats.wins,          sub: `${stats.podiums} podiums` },
+    { label: 'Poles',         value: stats.poles,         sub: 'pole positions' },
+    { label: 'Avg Points',    value: stats.avgPts,        sub: 'per race (career)' },
+    ...(seasonPts !== null ? [{ label: `${SEASON} Points`, value: seasonPts, sub: seasonPos ? `P${seasonPos} in standings` : '' }] : []),
+  ];
+
+  modalStats.innerHTML = boxes.map(b => `
+    <div class="modal-stat-box">
+      <span class="modal-stat-label">${esc(b.label)}</span>
+      <span class="modal-stat-value${b.cls ? ' ' + b.cls : ''}">${esc(String(b.value))}${b.sub && b.cls ? ' ' + esc(b.sub) : ''}</span>
+      ${b.sub && !b.cls ? `<span class="modal-stat-sub">${esc(b.sub)}</span>` : ''}
+    </div>`).join('');
+
+  modalLoader.hidden = true;
+  modalStats.hidden  = false;
 }
 
 // ── Navigation ───────────────────────────────────────────────────
