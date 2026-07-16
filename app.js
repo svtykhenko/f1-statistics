@@ -2,12 +2,134 @@
    F1 Race Results  –  app.js
    Primary API  : Jolpica  https://api.jolpi.ca/ergast/f1/
    Fallback API : Ergast   https://ergast.com/api/f1/
+   Rate limits  : 4 req/s burst · 500 req/hr sustained (unauthenticated)
    ───────────────────────────────────────────────────────────────── */
 
 const CURRENT_YEAR   = new Date().getFullYear();
 let   SEASON         = CURRENT_YEAR;
 let   BASE           = `https://api.jolpi.ca/ergast/f1/${SEASON}`;
 const ERGAST_BASE_ROOT = 'https://ergast.com/api/f1';
+
+// ── Throttled request queue ───────────────────────────────────────
+// Max 2 concurrent requests, ≥300 ms between dispatches.
+// Keeps the app well under the 4 req/s burst limit even when many
+// callers enqueue requests simultaneously (e.g. career stats modal).
+// On HTTP 429 the failing request is re-queued with exponential back-off.
+//
+// OpenF1 requests bypass the queue via fetchJSON directly — they are
+// rate-limited independently and not subject to Jolpica limits.
+
+const QUEUE_CONCURRENCY = 2;
+const QUEUE_INTERVAL_MS = 300;
+const MAX_RETRIES       = 3;
+const RETRY_BASE_MS     = 1000;
+
+let _queueActive  = 0;
+const _queuePending = [];
+let _lastDispatch = 0;
+
+function _dispatchNext() {
+  if (_queueActive >= QUEUE_CONCURRENCY || _queuePending.length === 0) return;
+  const now  = Date.now();
+  const wait = Math.max(0, _lastDispatch + QUEUE_INTERVAL_MS - now);
+  setTimeout(() => {
+    if (_queueActive >= QUEUE_CONCURRENCY || _queuePending.length === 0) return;
+    _queueActive++;
+    _lastDispatch = Date.now();
+    const task = _queuePending.shift();
+    _runTask(task);
+    _dispatchNext();
+  }, wait);
+}
+
+async function _runTask({ url, resolve, reject, retries }) {
+  try {
+    const res = await fetch(url);
+
+    if (res.status === 429) {
+      // Respect Retry-After header when present; otherwise exponential back-off
+      const retryAfter = parseInt(res.headers.get('Retry-After') || '0', 10);
+      const delay = retryAfter > 0
+        ? retryAfter * 1000
+        : RETRY_BASE_MS * Math.pow(2, MAX_RETRIES - retries + 1);
+      if (retries > 0) {
+        setTimeout(() => {
+          _queueActive--;
+          _queuePending.unshift({ url, resolve, reject, retries: retries - 1 });
+          _dispatchNext();
+        }, delay);
+        return;
+      }
+      _queueActive--;
+      _dispatchNext();
+      reject(new Error('Rate limited (HTTP 429). Please wait a moment and try again.'));
+      return;
+    }
+
+    if (!res.ok) {
+      _queueActive--;
+      _dispatchNext();
+      reject(new Error(`HTTP ${res.status} – ${res.statusText}`));
+      return;
+    }
+
+    const json = await res.json();
+    lsSet(url, json);
+    _queueActive--;
+    _dispatchNext();
+    resolve(json);
+  } catch (err) {
+    _queueActive--;
+    _dispatchNext();
+    reject(err);
+  }
+}
+
+// ── localStorage persistent cache with TTL ────────────────────────
+// Historical season data never changes → 30-day TTL.
+// Current-season data can update after each race → 4-hour TTL.
+// OpenF1 URLs are not cached here (they use fetchJSON directly).
+
+const LS_PREFIX     = 'f1stats_';
+const LS_TTL_STATIC = 30 * 24 * 60 * 60 * 1000;  // 30 days
+const LS_TTL_LIVE   =  4 * 60 * 60 * 1000;        // 4 hours
+
+function _lsTtl(url) {
+  return (url.includes(`/f1/${CURRENT_YEAR}/`) || url.includes(`/f1/${SEASON}/`))
+    ? LS_TTL_LIVE
+    : LS_TTL_STATIC;
+}
+
+function lsSet(url, data) {
+  try {
+    localStorage.setItem(LS_PREFIX + url, JSON.stringify({ ts: Date.now(), data }));
+  } catch (_) { /* quota exceeded — skip silently */ }
+}
+
+function lsGet(url) {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + url);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > _lsTtl(url)) {
+      localStorage.removeItem(LS_PREFIX + url);
+      return null;
+    }
+    return data;
+  } catch (_) { return null; }
+}
+
+// ── Queued fetch for Jolpica/Ergast ──────────────────────────────
+// Hits localStorage first; otherwise enqueues through the throttled queue.
+// Use this for all Jolpica and Ergast API calls.
+function queuedFetch(url) {
+  const cached = lsGet(url);
+  if (cached !== null) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    _queuePending.push({ url, resolve, reject, retries: MAX_RETRIES });
+    _dispatchNext();
+  });
+}
 
 // ── Team colours (constructor IDs → hex) ─────────────────────────
 const TEAM_COLORS = {
@@ -64,6 +186,7 @@ function esc(str) {
   return el.innerHTML;
 }
 
+// Plain fetch for non-Jolpica URLs (OpenF1). No queue, no LS cache.
 async function fetchJSON(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} – ${res.statusText}`);
@@ -71,27 +194,25 @@ async function fetchJSON(url) {
 }
 
 /**
- * Fetch from the primary Jolpica URL; if it fails (network error or non-2xx),
- * retry the equivalent path on the Ergast fallback host.
- *
- * Both APIs share the same path/query-string convention, so we only need to
- * swap the host prefix.
+ * Fetch from the primary Jolpica URL via the throttled queue.
+ * On failure, retry the equivalent path on the Ergast fallback host.
+ * Both APIs share the same path/query-string convention.
  *
  * @param {string} primaryUrl  - Full URL starting with BASE or api.jolpi.ca
  * @returns {Promise<any>}
  */
 async function fetchWithFallback(primaryUrl) {
   try {
-    return await fetchJSON(primaryUrl);
+    return await queuedFetch(primaryUrl);
   } catch (primaryErr) {
-    // Derive the fallback URL by replacing the Jolpica root with Ergast root.
+    // Derive the fallback URL by replacing the Jolpica root with the Ergast root.
     // e.g. https://api.jolpi.ca/ergast/f1/2025/races.json?limit=30
     //   → https://ergast.com/api/f1/2025/races.json?limit=30
     const fallbackUrl = primaryUrl
       .replace(/^https?:\/\/api\.jolpi\.ca\/ergast\/f1/, ERGAST_BASE_ROOT);
     if (fallbackUrl === primaryUrl) throw primaryErr; // no substitution possible
     console.warn(`[F1] Primary source failed (${primaryErr.message}). Retrying via Ergast fallback…`);
-    return await fetchJSON(fallbackUrl);
+    return await queuedFetch(fallbackUrl);
   }
 }
 
@@ -1144,14 +1265,26 @@ async function openDriverModal(driver, standing) {
   }
 }
 
+// Helper: run async task factories in batches of batchSize, waiting for each
+// batch before starting the next. Prevents unbounded Promise.all() bursts for
+// drivers with long careers (Hamilton = 18 seasons, Alonso = 20+).
+async function batchedAll(tasks, batchSize) {
+  const results = [];
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = await Promise.all(tasks.slice(i, i + batchSize).map(fn => fn()));
+    results.push(...batch);
+  }
+  return results;
+}
+
 async function fetchCareerStats(driverId) {
   if (cachedCareer[driverId]) return cachedCareer[driverId];
 
   const base = `https://api.jolpi.ca/ergast/f1/drivers/${driverId}`;
 
-  // Phase 1: fetch aggregate totals + seasons list in parallel.
-  // The filtered endpoints (results/1, grid/1, etc.) return just a `total`
-  // count when limit=1, so these are tiny fast requests.
+  // Phase 1: fetch aggregate totals + seasons list.
+  // The filtered endpoints return just a `total` count when limit=1,
+  // so these are tiny responses. 5 concurrent is fine via the queue.
   const [winsRes, p2Res, p3Res, polesRes, seasonsRes] = await Promise.all([
     fetchWithFallback(`${base}/results/1.json?limit=1`),          // wins
     fetchWithFallback(`${base}/results/2.json?limit=1`),          // P2 finishes
@@ -1168,14 +1301,16 @@ async function fetchCareerStats(driverId) {
   const seasonList = seasonsRes.MRData.SeasonTable.Seasons ?? [];
   const seasons    = seasonList.length;
 
-  // Phase 2: for each career season fetch the driver's final standing (position).
-  // Championships = seasons where position === "1".
-  // These are tiny single-driver responses; fire them all in parallel.
-  const standingReqs = seasonList.map(s =>
-    fetchWithFallback(`https://api.jolpi.ca/ergast/f1/${s.season}/drivers/${driverId}/driverstandings.json?limit=1`)
-      .catch(() => null)   // ignore seasons where standing is not yet available
+  // Phase 2: championship count — one request per career season.
+  // Use batches of 4 instead of firing all at once: a 20-season driver
+  // would otherwise launch 20 simultaneous requests, busting the burst limit.
+  const standingPages = await batchedAll(
+    seasonList.map(s => () =>
+      fetchWithFallback(`https://api.jolpi.ca/ergast/f1/${s.season}/drivers/${driverId}/driverstandings.json?limit=1`)
+        .catch(() => null)   // ignore seasons where standing is not yet available
+    ),
+    4
   );
-  const standingPages = await Promise.all(standingReqs);
   const championships = standingPages.filter(res => {
     if (!res) return false;
     const sl = res.MRData?.StandingsTable?.StandingsLists?.[0];
@@ -1188,11 +1323,13 @@ async function fetchCareerStats(driverId) {
   let   races      = [...(firstPage.MRData.RaceTable.Races ?? [])];
 
   if (totalRaces > 100) {
-    const pagePromises = [];
-    for (let offset = 100; offset < totalRaces; offset += 100) {
-      pagePromises.push(fetchWithFallback(`${base}/results.json?limit=100&offset=${offset}`));
-    }
-    const pages = await Promise.all(pagePromises);
+    // Fetch remaining pages in batches of 3 to stay within burst limits.
+    const offsets = [];
+    for (let offset = 100; offset < totalRaces; offset += 100) offsets.push(offset);
+    const pages = await batchedAll(
+      offsets.map(offset => () => fetchWithFallback(`${base}/results.json?limit=100&offset=${offset}`)),
+      3
+    );
     pages.forEach(p => { races = races.concat(p.MRData.RaceTable.Races ?? []); });
   }
 
